@@ -1,8 +1,9 @@
 pipeline {
   agent any
   options { timestamps() }
-  environment { 
-    // So "from app..." works when pytest runs
+
+  environment {
+    // So "from app..." works in pytest
     PYTHONPATH = "${WORKSPACE}"
   }
 
@@ -19,7 +20,7 @@ pipeline {
             python3 --version
             python3 -m venv venv
             . venv/bin/activate
-            # Use venv's python/pip; do NOT modify system pip (PEP 668)
+            # Use venv's python/pip only (avoids PEP 668 issues)
             venv/bin/python -m pip --version
             venv/bin/python -m pip install --no-cache-dir -r requirements.txt
           '''
@@ -34,7 +35,7 @@ pipeline {
             set -eux
             . venv/bin/activate
             mkdir -p reports
-            # JUnit XML + Coverage XML (Cobertura format) + terminal summary
+            # JUnit + Cobertura XML coverage + terminal summary
             venv/bin/python -m pytest -q --maxfail=1 --disable-warnings \
               --junitxml=reports/junit.xml \
               --cov=app --cov-report=xml:reports/coverage.xml --cov-report=term-missing
@@ -45,15 +46,22 @@ pipeline {
   }
 
   post {
-    // Always publish test & coverage reports, even on failure
     always {
+      // Publish tests & artifacts
       junit 'reports/junit.xml'
       archiveArtifacts artifacts: 'reports/**', fingerprint: true
 
-      // If the Coverage plugin is installed, this will render a Coverage link + graphs
-      publishCoverage adapters: [coberturaAdapter('reports/coverage.xml')],
-                      sourceFileResolver: sourceFiles('STORE_LAST_BUILD'),
-                      failNoReports: false
+      // Publish coverage using Code Coverage API (requires "Code Coverage API" + "Cobertura" parser)
+      script {
+        if (fileExists('reports/coverage.xml')) {
+          recordCoverage tools: [cobertura(pattern: 'reports/coverage.xml')],
+                         sourceFileResolver: sourceFiles('STORE_LAST_BUILD'),
+                         calculateDiffForChangeRequests: true,
+                         failNoReports: false
+        } else {
+          echo 'Coverage file not found (reports/coverage.xml) — skipping coverage publish.'
+        }
+      }
     }
 
     success {
@@ -62,7 +70,6 @@ pipeline {
         string(credentialsId: 'webex-room-id', variable: 'WEBEX_ROOM_ID')
       ]) {
         ansiColor('xterm') {
-          // Build JSON safely and pass to curl without Groovy interpolation issues
           sh '''
             set -e
             cat <<EOF | curl -sS https://webexapis.com/v1/messages \
