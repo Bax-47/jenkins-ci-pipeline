@@ -51,12 +51,10 @@ pipeline {
       junit 'reports/junit.xml'
       archiveArtifacts artifacts: 'reports/**', fingerprint: true
 
-      // Publish coverage using Code Coverage API (requires "Code Coverage API" + "Cobertura" parser)
+      // Publish coverage using Code Coverage API (generic form to avoid plugin symbol clash)
       script {
         if (fileExists('reports/coverage.xml')) {
-          recordCoverage tools: [cobertura(pattern: 'reports/coverage.xml')],
-                         sourceFileResolver: sourceFiles('STORE_LAST_BUILD'),
-                         calculateDiffForChangeRequests: true,
+          recordCoverage tools: [[parser: 'COBERTURA', pattern: 'reports/coverage.xml']],
                          failNoReports: false
         } else {
           echo 'Coverage file not found (reports/coverage.xml) — skipping coverage publish.'
