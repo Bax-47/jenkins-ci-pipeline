@@ -1,16 +1,12 @@
 pipeline {
   agent any
 
-  options { 
-    timestamps() 
-  }
+  options { timestamps() }
 
   environment {
-    WEBEX_ROOM_ID = credentials('webex-room-id')
-    WEBEX_TOKEN   = credentials('webex-token')
+    // make python see your repo root so "from app..." works
+    PYTHONPATH = "${WORKSPACE}"
   }
-
-  triggers { pollSCM('@daily') } // real trigger will be GitHub webhook
 
   stages {
     stage('Checkout') {
@@ -24,11 +20,7 @@ pipeline {
         ansiColor('xterm') {
           sh '''
             set -eux
-            python3 --version || true
-            if ! command -v python3 >/dev/null 2>&1; then
-              echo "Python not found in Jenkins container. Please install it (see below)."
-              exit 1
-            fi
+            python3 --version
             python3 -m venv venv
             . venv/bin/activate
             pip install -U pip
@@ -44,6 +36,7 @@ pipeline {
           sh '''
             set -eux
             . venv/bin/activate
+            # PYTHONPATH is already set at pipeline level
             pytest -q --maxfail=1 --disable-warnings
           '''
         }
@@ -53,25 +46,35 @@ pipeline {
 
   post {
     success {
-      ansiColor('xterm') {
-        sh """
-          curl -sS https://webexapis.com/v1/messages \
-            -H "Authorization: Bearer ${WEBEX_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{ "roomId": "${WEBEX_ROOM_ID}", "markdown": "**SUCCESS** :white_check_mark: Job *${JOB_NAME}* #${BUILD_NUMBER} on *${BRANCH_NAME}* passed tests." }' >/dev/null
-        """
+      withCredentials([
+        string(credentialsId: 'webex-token',   variable: 'WEBEX_TOKEN'),
+        string(credentialsId: 'webex-room-id', variable: 'WEBEX_ROOM_ID')
+      ]) {
+        ansiColor('xterm') {
+          // safe quoting: single-quoted Groovy string; shell expands $VARS; JSON is valid
+          sh '''
+            curl -sS https://webexapis.com/v1/messages \
+              -H "Authorization: Bearer $WEBEX_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"**SUCCESS** :white_check_mark: Job *$JOB_NAME* #$BUILD_NUMBER passed tests.\"}"
+          '''
+        }
       }
     }
     failure {
-      ansiColor('xterm') {
-        sh """
-          curl -sS https://webexapis.com/v1/messages \
-            -H "Authorization: Bearer ${WEBEX_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d '{ "roomId": "${WEBEX_ROOM_ID}", "markdown": "**FAILURE** :x: Job *${JOB_NAME}* #${BUILD_NUMBER} failed. Check Jenkins console." }' >/dev/null
-        """
+      withCredentials([
+        string(credentialsId: 'webex-token',   variable: 'WEBEX_TOKEN'),
+        string(credentialsId: 'webex-room-id', variable: 'WEBEX_ROOM_ID')
+      ]) {
+        ansiColor('xterm') {
+          sh '''
+            curl -sS https://webexapis.com/v1/messages \
+              -H "Authorization: Bearer $WEBEX_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"roomId\":\"$WEBEX_ROOM_ID\",\"markdown\":\"**FAILURE** :x: Job *$JOB_NAME* #$BUILD_NUMBER failed. Check Jenkins console.\"}"
+          '''
+        }
       }
     }
   }
 }
-
